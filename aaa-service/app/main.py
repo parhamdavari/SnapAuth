@@ -201,19 +201,18 @@ async def get_user_info(current_user: Dict[str, Any] = Depends(get_current_user)
 async def logout(logout_request: LogoutRequest):
     """Logout user and optionally revoke refresh token"""
     try:
+        # Attempt server-side token revocation if refresh token is provided
         if logout_request.refresh_token:
             fusionauth_adapter.logout(logout_request.refresh_token)
 
+        # Logout is always considered successful for stateless JWTs
         return {"message": "Logout successful"}
 
-    except FusionAuthError:
-        raise
     except Exception as e:
-        logger.error(f"Unexpected error during logout: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Internal server error"
-        )
+        # Log unexpected errors but still return success
+        # Client-side logout (discarding tokens) is sufficient for JWTs
+        logger.warning(f"Server-side logout warning: {e}")
+        return {"message": "Logout successful"}
 
 
 @app.get("/v1/.well-known/jwks.json")

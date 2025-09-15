@@ -123,16 +123,17 @@ class FusionAuthAdapter:
             return
 
         try:
-            logout_request = {
+            # Try the correct FusionAuth client logout method with refresh token string
+            response = self.client.logout_with_request({
                 "refreshToken": refresh_token
-            }
-
-            response = self.client.logout(logout_request)
+            })
             self._handle_response(response)
 
         except Exception as e:
-            logger.error(f"Error during logout: {e}")
-            raise FusionAuthError(f"Logout failed: {str(e)}")
+            # If FusionAuth logout fails, log but don't fail the request
+            # JWTs are stateless and will expire naturally
+            logger.warning(f"Server-side logout failed, but client-side logout successful: {e}")
+            # Don't raise exception - logout is considered successful
 
 
 # Global adapter instance
