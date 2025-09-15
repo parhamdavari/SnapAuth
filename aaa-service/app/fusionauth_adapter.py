@@ -1,0 +1,139 @@
+from typing import Optional, List, Dict, Any
+from fusionauth.fusionauth_client import FusionAuthClient
+from tenacity import retry, stop_after_attempt, wait_exponential
+import logging
+
+from .settings import settings
+
+logger = logging.getLogger(__name__)
+
+
+class FusionAuthError(Exception):
+    """Custom exception for FusionAuth errors"""
+    def __init__(self, message: str, status_code: Optional[int] = None, details: Optional[str] = None):
+        self.message = message
+        self.status_code = status_code
+        self.details = details
+        super().__init__(self.message)
+
+
+class FusionAuthAdapter:
+    def __init__(self):
+        self.client = FusionAuthClient(
+            api_key=settings.fusionauth_api_key,
+            base_url=settings.fusionauth_base_url
+        )
+        self.application_id = settings.fusionauth_application_id
+        self.tenant_id = settings.fusionauth_tenant_id or None
+
+    def _handle_response(self, response) -> Dict[str, Any]:
+        """Handle FusionAuth API response and extract data or raise error"""
+        if response.was_successful():
+            return response.success_response
+        else:
+            error_data = response.error_response
+            error_msg = f"FusionAuth API error (status: {response.status})"
+            details = None
+
+            if error_data:
+                if 'fieldErrors' in error_data:
+                    details = str(error_data['fieldErrors'])
+                elif 'generalErrors' in error_data:
+                    details = str(error_data['generalErrors'])
+                else:
+                    details = str(error_data)
+
+            logger.error(f"FusionAuth error: {error_msg}, details: {details}")
+
+            raise FusionAuthError(
+                message=error_msg,
+                status_code=response.status,
+                details=details
+            )
+
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
+    def create_user(self, username: str, password: str) -> str:
+        """Create a new user in FusionAuth"""
+        try:
+            user_request = {
+                "user": {
+                    "username": username,
+                    "password": password,
+                    "active": True
+                }
+            }
+
+            if self.tenant_id:
+                user_request["user"]["tenantId"] = self.tenant_id
+
+            response = self.client.create_user(user_request)
+            result = self._handle_response(response)
+
+            return result["user"]["id"]
+
+        except Exception as e:
+            logger.error(f"Error creating user: {e}")
+            raise FusionAuthError(f"Failed to create user: {str(e)}")
+
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
+    def register_user(self, user_id: str, roles: List[str]) -> None:
+        """Register user to application with specified roles"""
+        try:
+            registration_request = {
+                "registration": {
+                    "applicationId": self.application_id,
+                    "roles": roles
+                }
+            }
+
+            response = self.client.register(registration_request, user_id)
+            self._handle_response(response)
+
+        except Exception as e:
+            logger.error(f"Error registering user: {e}")
+            raise FusionAuthError(f"Failed to register user: {str(e)}")
+
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
+    def login(self, username: str, password: str) -> Dict[str, Optional[str]]:
+        """Authenticate user and return tokens"""
+        try:
+            login_request = {
+                "loginId": username,
+                "password": password,
+                "applicationId": self.application_id
+            }
+
+            response = self.client.login(login_request)
+            result = self._handle_response(response)
+
+            return {
+                "accessToken": result.get("token"),
+                "refreshToken": result.get("refreshToken"),
+                "userId": result.get("user", {}).get("id")
+            }
+
+        except Exception as e:
+            logger.error(f"Error during login: {e}")
+            raise FusionAuthError(f"Login failed: {str(e)}")
+
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
+    def logout(self, refresh_token: Optional[str] = None) -> None:
+        """Logout user and optionally revoke refresh token"""
+        if not refresh_token:
+            return
+
+        try:
+            logout_request = {
+                "refreshToken": refresh_token
+            }
+
+            response = self.client.logout(logout_request)
+            self._handle_response(response)
+
+        except Exception as e:
+            logger.error(f"Error during logout: {e}")
+            raise FusionAuthError(f"Logout failed: {str(e)}")
+
+
+# Global adapter instance
+fusionauth_adapter = FusionAuthAdapter()
