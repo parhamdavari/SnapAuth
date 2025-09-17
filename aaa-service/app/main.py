@@ -1,6 +1,7 @@
 import httpx
 import logging
-from datetime import datetime
+from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from typing import Dict, Any
 from fastapi import FastAPI, HTTPException, Depends, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -9,7 +10,7 @@ from fastapi.responses import JSONResponse
 from .schemas import (
     UserCreateRequest, UserCreateResponse, LoginRequest, TokenResponse,
     RefreshTokenRequest, RefreshTokenResponse, UserInfoResponse,
-    LogoutRequest, ErrorResponse, HealthResponse
+    LogoutRequest, HealthResponse
 )
 from .fusionauth_adapter import fusionauth_adapter, FusionAuthError
 from .jwks import jwks_manager, JWTVerificationError, JWKSError
@@ -19,17 +20,11 @@ from .settings import settings
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# FastAPI app
-app = FastAPI(
-    title="AAA Service",
-    description="Minimal Authentication and Authorization microservice with FusionAuth",
-    version="1.0.0"
-)
 
-
-@app.on_event("startup")
-async def validate_jwt_configuration():
-    """Validate JWT configuration against FusionAuth at startup"""
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Handle application lifespan events"""
+    # Startup
     try:
         logger.info("Validating JWT configuration against FusionAuth...")
 
@@ -54,12 +49,26 @@ async def validate_jwt_configuration():
         logger.error(f"JWT configuration validation failed: {e}")
         raise RuntimeError(f"Service startup failed due to JWT configuration error: {e}")
 
+    yield
+
+    # Shutdown (cleanup if needed)
+    logger.info("Application shutting down...")
+
+
+# FastAPI app
+app = FastAPI(
+    title="AAA Service",
+    description="Minimal Authentication and Authorization microservice with FusionAuth",
+    version="1.0.0",
+    lifespan=lifespan
+)
+
 # Security scheme
 security = HTTPBearer()
 
 
 @app.exception_handler(FusionAuthError)
-async def fusionauth_exception_handler(request, exc: FusionAuthError):
+async def fusionauth_exception_handler(_request, exc: FusionAuthError):
     return JSONResponse(
         status_code=exc.status_code or 500,
         content={"error": exc.message, "details": exc.details}
@@ -67,7 +76,7 @@ async def fusionauth_exception_handler(request, exc: FusionAuthError):
 
 
 @app.exception_handler(JWTVerificationError)
-async def jwt_verification_exception_handler(request, exc: JWTVerificationError):
+async def jwt_verification_exception_handler(_request, exc: JWTVerificationError):
     return JSONResponse(
         status_code=401,
         content={"error": "Invalid token", "details": str(exc)}
@@ -75,7 +84,7 @@ async def jwt_verification_exception_handler(request, exc: JWTVerificationError)
 
 
 @app.exception_handler(JWKSError)
-async def jwks_exception_handler(request, exc: JWKSError):
+async def jwks_exception_handler(_request, exc: JWKSError):
     return JSONResponse(
         status_code=503,
         content={"error": "Service temporarily unavailable", "details": str(exc)}
@@ -109,7 +118,7 @@ async def health_check():
     """Health check endpoint"""
     return HealthResponse(
         status="healthy",
-        timestamp=datetime.utcnow().isoformat()
+        timestamp=datetime.now(timezone.utc).isoformat()
     )
 
 
@@ -129,7 +138,7 @@ async def jwt_config_health_check():
                     "error": "JWT issuer mismatch",
                     "fusionauth_issuer": fusionauth_issuer,
                     "expected_issuer": settings.jwt_expected_iss,
-                    "timestamp": datetime.utcnow().isoformat()
+                    "timestamp": datetime.now(timezone.utc).isoformat()
                 }
             )
 
@@ -137,7 +146,7 @@ async def jwt_config_health_check():
             "status": "healthy",
             "issuer": fusionauth_issuer,
             "audience": settings.jwt_expected_aud,
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": datetime.now(timezone.utc).isoformat()
         }
 
     except Exception as e:
@@ -146,7 +155,7 @@ async def jwt_config_health_check():
             content={
                 "status": "unhealthy",
                 "error": str(e),
-                "timestamp": datetime.utcnow().isoformat()
+                "timestamp": datetime.now(timezone.utc).isoformat()
             }
         )
 
@@ -267,8 +276,15 @@ async def get_user_info(current_user: Dict[str, Any] = Depends(get_current_user)
             logger.warning(f"Could not fetch username from FusionAuth: {e}")
             username = None
 
+    sub = current_user.get("sub")
+    if not sub:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token: missing subject"
+        )
+
     return UserInfoResponse(
-        sub=current_user.get("sub"),
+        sub=sub,
         username=username,
         roles=current_user.get("roles", [])
     )
