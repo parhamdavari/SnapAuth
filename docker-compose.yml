@@ -53,7 +53,7 @@ services:
       FUSIONAUTH_API_KEY: changeme-api-key
       FUSIONAUTH_TENANT_ID: ""
       FUSIONAUTH_APPLICATION_ID: 6bd5d02c-99b4-4338-9336-3f7572fd3c40
-      JWT_EXPECTED_ISS: acme.com
+      JWT_EXPECTED_ISS: localhost:9011
       JWT_EXPECTED_AUD: 6bd5d02c-99b4-4338-9336-3f7572fd3c40
       JWKS_CACHE_TTL_SECONDS: 300
     ports:

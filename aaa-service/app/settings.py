@@ -30,12 +30,12 @@ class Settings(BaseSettings):
     )
 
     jwt_expected_iss: str = Field(
-        default="http://fusionauth:9011",
+        default="localhost:9011",
         description="Expected JWT issuer for token verification"
     )
 
     jwt_expected_aud: str = Field(
-        default="10000000-0000-0002-0000-000000000001",
+        default="6bd5d02c-99b4-4338-9336-3f7572fd3c40",
         description="Expected JWT audience for token verification"
     )
 

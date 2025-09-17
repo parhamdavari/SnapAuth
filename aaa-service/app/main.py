@@ -26,6 +26,34 @@ app = FastAPI(
     version="1.0.0"
 )
 
+
+@app.on_event("startup")
+async def validate_jwt_configuration():
+    """Validate JWT configuration against FusionAuth at startup"""
+    try:
+        logger.info("Validating JWT configuration against FusionAuth...")
+
+        # Fetch OIDC configuration from FusionAuth
+        oidc_config = await jwks_manager._fetch_oidc_configuration()
+        fusionauth_issuer = oidc_config.get("issuer")
+
+        # Compare with our expected issuer
+        if fusionauth_issuer != settings.jwt_expected_iss:
+            error_msg = (
+                f"JWT issuer mismatch! "
+                f"FusionAuth issuer: {fusionauth_issuer}, "
+                f"Expected issuer: {settings.jwt_expected_iss}. "
+                f"Update JWT_EXPECTED_ISS environment variable to match FusionAuth."
+            )
+            logger.error(error_msg)
+            raise RuntimeError(error_msg)
+
+        logger.info(f"JWT configuration validated successfully. Issuer: {fusionauth_issuer}")
+
+    except Exception as e:
+        logger.error(f"JWT configuration validation failed: {e}")
+        raise RuntimeError(f"Service startup failed due to JWT configuration error: {e}")
+
 # Security scheme
 security = HTTPBearer()
 
@@ -83,6 +111,44 @@ async def health_check():
         status="healthy",
         timestamp=datetime.utcnow().isoformat()
     )
+
+
+@app.get("/health/jwt-config")
+async def jwt_config_health_check():
+    """Health check for JWT configuration"""
+    try:
+        # Validate JWT configuration against FusionAuth
+        oidc_config = await jwks_manager._fetch_oidc_configuration()
+        fusionauth_issuer = oidc_config.get("issuer")
+
+        if fusionauth_issuer != settings.jwt_expected_iss:
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "status": "unhealthy",
+                    "error": "JWT issuer mismatch",
+                    "fusionauth_issuer": fusionauth_issuer,
+                    "expected_issuer": settings.jwt_expected_iss,
+                    "timestamp": datetime.utcnow().isoformat()
+                }
+            )
+
+        return {
+            "status": "healthy",
+            "issuer": fusionauth_issuer,
+            "audience": settings.jwt_expected_aud,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+
+    except Exception as e:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "unhealthy",
+                "error": str(e),
+                "timestamp": datetime.utcnow().isoformat()
+            }
+        )
 
 
 @app.post("/v1/users", response_model=UserCreateResponse, status_code=status.HTTP_201_CREATED)
@@ -190,9 +256,20 @@ async def refresh_token(refresh_request: RefreshTokenRequest):
 @app.get("/v1/auth/me", response_model=UserInfoResponse)
 async def get_user_info(current_user: Dict[str, Any] = Depends(get_current_user)):
     """Get user information from verified JWT token"""
+    username = current_user.get("preferred_username")
+
+    # If username not in JWT, fetch from FusionAuth API using user ID
+    if not username and current_user.get("sub"):
+        try:
+            user_info = fusionauth_adapter.get_user(current_user["sub"])
+            username = user_info.get("username")
+        except Exception as e:
+            logger.warning(f"Could not fetch username from FusionAuth: {e}")
+            username = None
+
     return UserInfoResponse(
         sub=current_user.get("sub"),
-        username=current_user.get("preferred_username"),
+        username=username,
         roles=current_user.get("roles", [])
     )
 
