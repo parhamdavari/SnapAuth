@@ -167,7 +167,8 @@ async def create_user(user_request: UserCreateRequest):
         # Create user in FusionAuth
         user_id = fusionauth_adapter.create_user(
             username=user_request.username,
-            password=user_request.password
+            password=user_request.password,
+            metadata=user_request.metadata
         )
 
         # Register user to application with roles if application ID is configured
@@ -266,14 +267,16 @@ async def refresh_token(refresh_request: RefreshTokenRequest):
 async def get_user_info(current_user: Dict[str, Any] = Depends(get_current_user)):
     """Get user information from verified JWT token"""
     username = current_user.get("preferred_username")
+    metadata = None
 
     # If username not in JWT, fetch from FusionAuth API using user ID
     if not username and current_user.get("sub"):
         try:
             user_info = fusionauth_adapter.get_user(current_user["sub"])
             username = user_info.get("username")
+            metadata = user_info.get("data", {})
         except Exception as e:
-            logger.warning(f"Could not fetch username from FusionAuth: {e}")
+            logger.warning(f"Could not fetch user info from FusionAuth: {e}")
             username = None
 
     sub = current_user.get("sub")
@@ -286,7 +289,8 @@ async def get_user_info(current_user: Dict[str, Any] = Depends(get_current_user)
     return UserInfoResponse(
         sub=sub,
         username=username,
-        roles=current_user.get("roles", [])
+        roles=current_user.get("roles", []),
+        metadata=metadata
     )
 
 

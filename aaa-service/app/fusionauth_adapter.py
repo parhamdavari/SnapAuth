@@ -52,14 +52,15 @@ class FusionAuthAdapter:
             )
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
-    def create_user(self, username: str, password: str) -> str:
+    def create_user(self, username: str, password: str, metadata: Dict[str, str]) -> str:
         """Create a new user in FusionAuth"""
         try:
             user_request = {
                 "user": {
                     "username": username,
                     "password": password,
-                    "active": True
+                    "active": True,
+                    "data": metadata
                 }
             }
 
@@ -106,10 +107,14 @@ class FusionAuthAdapter:
             response = self.client.login(login_request)
             result = self._handle_response(response)
 
+            user_data = result.get("user", {})
+            metadata = user_data.get("data", {})
+
             return {
                 "accessToken": result.get("token"),
                 "refreshToken": result.get("refreshToken"),
-                "userId": result.get("user", {}).get("id")
+                "userId": user_data.get("id"),
+                "metadata": metadata
             }
 
         except Exception as e:
