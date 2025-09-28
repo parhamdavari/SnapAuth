@@ -51,7 +51,11 @@ class FusionAuthAdapter:
                 details=details
             )
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
+    @retry(
+        reraise=True,
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=4, max=10),
+    )
     def create_user(self, username: str, password: str, metadata: Dict[str, str]) -> str:
         """Create a new user in FusionAuth"""
         try:
@@ -72,11 +76,17 @@ class FusionAuthAdapter:
 
             return result["user"]["id"]
 
+        except FusionAuthError:
+            raise
         except Exception as e:
             logger.error(f"Error creating user: {e}")
             raise FusionAuthError(f"Failed to create user: {str(e)}")
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
+    @retry(
+        reraise=True,
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=4, max=10),
+    )
     def register_user(self, user_id: str, roles: List[str]) -> None:
         """Register user to application with specified roles"""
         try:
@@ -90,18 +100,26 @@ class FusionAuthAdapter:
             response = self.client.register(registration_request, user_id)
             self._handle_response(response)
 
+        except FusionAuthError:
+            raise
         except Exception as e:
             logger.error(f"Error registering user: {e}")
             raise FusionAuthError(f"Failed to register user: {str(e)}")
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
+    @retry(
+        reraise=True,
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=4, max=10),
+    )
     def login(self, username: str, password: str) -> Dict[str, Optional[str]]:
         """Authenticate user and return tokens"""
         try:
             login_request = {
                 "loginId": username,
                 "password": password,
-                "applicationId": self.application_id
+                "applicationId": self.application_id,
+                "generateRefreshTokens": True,
+                "noJWT": False,
             }
 
             response = self.client.login(login_request)
@@ -109,19 +127,29 @@ class FusionAuthAdapter:
 
             user_data = result.get("user", {})
             metadata = user_data.get("data", {})
+            refresh_token = result.get("refreshToken")
+            if not refresh_token:
+                logger.error("FusionAuth login response missing refresh token despite request")
+                raise FusionAuthError("Login failed: refresh token not returned by FusionAuth", status_code=response.status)
 
             return {
                 "accessToken": result.get("token"),
-                "refreshToken": result.get("refreshToken"),
+                "refreshToken": refresh_token,
                 "userId": user_data.get("id"),
                 "metadata": metadata
             }
 
+        except FusionAuthError:
+            raise
         except Exception as e:
             logger.error(f"Error during login: {e}")
             raise FusionAuthError(f"Login failed: {str(e)}")
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
+    @retry(
+        reraise=True,
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=4, max=10),
+    )
     def get_user(self, user_id: str) -> Dict[str, Any]:
         """Get user information by user ID"""
         try:
@@ -129,11 +157,17 @@ class FusionAuthAdapter:
             result = self._handle_response(response)
             return result.get("user", {})
 
+        except FusionAuthError:
+            raise
         except Exception as e:
             logger.error(f"Error retrieving user: {e}")
             raise FusionAuthError(f"Failed to retrieve user: {str(e)}")
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
+    @retry(
+        reraise=True,
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=4, max=10),
+    )
     def logout(self, refresh_token: Optional[str] = None) -> None:
         """Logout user and optionally revoke refresh token"""
         if not refresh_token:
@@ -146,6 +180,8 @@ class FusionAuthAdapter:
             })
             self._handle_response(response)
 
+        except FusionAuthError:
+            raise
         except Exception as e:
             # If FusionAuth logout fails, log but don't fail the request
             # JWTs are stateless and will expire naturally

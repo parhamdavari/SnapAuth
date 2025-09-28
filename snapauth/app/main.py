@@ -57,8 +57,8 @@ async def lifespan(app: FastAPI):
 
 # FastAPI app
 app = FastAPI(
-    title="AAA Service",
-    description="Minimal Authentication and Authorization microservice with FusionAuth",
+    title="SnapAuth",
+    description="Minimal authentication and authorization facade for FusionAuth",
     version="1.0.0",
     lifespan=lifespan
 )
@@ -227,7 +227,7 @@ async def refresh_token(refresh_request: RefreshTokenRequest):
             "grant_type": "refresh_token",
             "refresh_token": refresh_request.refresh_token,
             "client_id": settings.fusionauth_application_id,
-            "client_secret": "n_KKk2DB3vkNPvUr-dgwc5HLG_QsI22Urj0s7Jq1JEE"
+            "client_secret": settings.fusionauth_client_secret,
         }
 
         # Make token refresh request

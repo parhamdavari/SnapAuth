@@ -1,10 +1,12 @@
 services:
   db:
     image: postgres:16-alpine
+    env_file:
+      - .env
     environment:
-      POSTGRES_USER: fusionauth
-      POSTGRES_PASSWORD: hkaLBM3RVnyYeYeqE3Gi
-      POSTGRES_DB: fusionauth
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
     ports:
       - "5434:5432"  # Changed from 5432 to avoid conflict with rasa-postgres on 5433
     volumes:
@@ -21,15 +23,17 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    env_file:
+      - .env
     environment:
-      DATABASE_URL: jdbc:postgresql://db:5432/fusionauth
-      DATABASE_ROOT_USERNAME: fusionauth
-      DATABASE_ROOT_PASSWORD: hkaLBM3RVnyYeYeqE3Gi
-      DATABASE_USERNAME: fusionauth
-      DATABASE_PASSWORD: hkaLBM3RVnyYeYeqE3Gi
-      FUSIONAUTH_APP_MEMORY: 512M
-      FUSIONAUTH_APP_RUNTIME_MODE: development
-      FUSIONAUTH_APP_URL: http://fusionauth:9011
+      DATABASE_URL: jdbc:postgresql://db:5432/${DB_NAME}
+      DATABASE_ROOT_USERNAME: ${DB_USER}
+      DATABASE_ROOT_PASSWORD: ${DB_PASSWORD}
+      DATABASE_USERNAME: ${DB_USER}
+      DATABASE_PASSWORD: ${DB_PASSWORD}
+      FUSIONAUTH_APP_MEMORY: ${FUSIONAUTH_APP_MEMORY}
+      FUSIONAUTH_APP_RUNTIME_MODE: ${FUSIONAUTH_APP_RUNTIME_MODE}
+      FUSIONAUTH_APP_URL: ${FUSIONAUTH_BASE_URL}
       SEARCH_TYPE: database
       FUSIONAUTH_APP_KICKSTART_FILE: /usr/local/fusionauth/kickstart/kickstart.json
     ports:
@@ -43,21 +47,15 @@ services:
       timeout: 5s
       retries: 10
 
-  aaa-service:
-    build: ./aaa-service
+  snapauth:
+    build: ./snapauth
     depends_on:
       fusionauth:
         condition: service_healthy
-    environment:
-      FUSIONAUTH_BASE_URL: http://fusionauth:9011
-      FUSIONAUTH_API_KEY: changeme-api-key
-      FUSIONAUTH_TENANT_ID: ""
-      FUSIONAUTH_APPLICATION_ID: 6bd5d02c-99b4-4338-9336-3f7572fd3c40
-      JWT_EXPECTED_ISS: localhost:9011
-      JWT_EXPECTED_AUD: 6bd5d02c-99b4-4338-9336-3f7572fd3c40
-      JWKS_CACHE_TTL_SECONDS: 300
+    env_file:
+      - .env
     ports:
-      - "8080:8080"  # AAA service port (no conflict with existing services)
+      - "${SNAPAUTH_SERVICE_PORT:-8080}:8080"  # SnapAuth service port (override host port via env)
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]

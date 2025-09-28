@@ -1,0 +1,1 @@
+# SnapAuth application package

@@ -1,10 +1,10 @@
-# AAA Microservice
+# SnapAuth
 
-> A minimal authentication, authorization, and accounting service built on FusionAuth
+> A minimal authentication layer for FusionAuth that ships with batteries-included defaults
 
 ## Overview
 
-Enterprise-grade authentication microservice that provides JWT-based stateless authentication with local role-based access control. Built for distributed architectures where consuming services verify tokens independently.
+SnapAuth delivers a ready-to-run authentication backend on top of FusionAuth. It exposes a tiny HTTP surface, handles bootstrap, and lets downstream services verify JWTs locally without touching FusionAuth’s admin UI.
 
 ## Features
 
@@ -19,7 +19,7 @@ Enterprise-grade authentication microservice that provides JWT-based stateless a
 
 ```
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   Client App    │───▶│  AAA Service    │───▶│   FusionAuth    │
+│   Client App    │───▶│    SnapAuth     │───▶│   FusionAuth    │
 └─────────────────┘    └─────────────────┘    └─────────────────┘
                                 │                        │
                                 ▼                        ▼
@@ -32,20 +32,21 @@ Enterprise-grade authentication microservice that provides JWT-based stateless a
 ## Quick Start
 
 ```bash
-# Start all services
-docker compose up -d
+cp .env.example .env
+python scripts/bootstrap.py  # generates secrets and kickstart configuration
+docker compose up --build
 
 # Verify health
 curl http://localhost:8080/health
 
 # Create user
-curl -X POST http://localhost:8080/v1/users \
-  -H "Content-Type: application/json" \
+curl -X POST http://localhost:8080/v1/users \\
+  -H "Content-Type: application/json" \\
   -d '{"username": "john", "password": "secure123", "roles": ["user"]}'
 
 # Authenticate
-curl -X POST http://localhost:8080/v1/auth/login \
-  -H "Content-Type: application/json" \
+curl -X POST http://localhost:8080/v1/auth/login \\
+  -H "Content-Type: application/json" \\
   -d '{"username": "john", "password": "secure123"}'
 ```
 
@@ -74,34 +75,33 @@ curl -X POST http://localhost:8080/v1/auth/login \
 
 ## Configuration
 
-Required environment variables:
+Configuration is driven by `.env`. Provide any overrides (for example a custom admin username or redirect URL) in that file, then run `python scripts/bootstrap.py`. The bootstrap script will:
 
-```env
-FUSIONAUTH_BASE_URL=http://fusionauth:9011
-FUSIONAUTH_API_KEY=changeme-api-key
-FUSIONAUTH_APPLICATION_ID=6bd5d02c-99b4-4338-9336-3f7572fd3c40
-JWT_EXPECTED_ISS=acme.com
-JWT_EXPECTED_AUD=6bd5d02c-99b4-4338-9336-3f7572fd3c40
-```
+- create unique IDs and secrets for FusionAuth (API key, client secret, application ID, admin password)
+- synchronise those values into `kickstart/kickstart.json` so FusionAuth provisions itself on startup
+- set database credentials that the bundled Postgres container and FusionAuth share
+
+Whenever you tweak `.env`, rerun the script to keep both files aligned.
 
 ## Local Verification
 
 Consuming services verify JWTs locally using the JWKS endpoint:
 
 ```python
+import os
 import jwt
 import requests
 
 # Get public keys
 jwks = requests.get("http://localhost:8080/v1/.well-known/jwks.json").json()
 
-# Verify token locally
+# Verify token locally using generated configuration
 payload = jwt.decode(
     token,
     jwks,
     algorithms=["RS256"],
-    issuer="acme.com",
-    audience="6bd5d02c-99b4-4338-9336-3f7572fd3c40"
+    issuer=os.environ["JWT_EXPECTED_ISS"],
+    audience=os.environ["JWT_EXPECTED_AUD"],
 )
 
 # Check roles

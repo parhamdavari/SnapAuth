@@ -3,7 +3,7 @@
     "defaultTenantId": "d7d09513-a3f5-401c-9685-34ab6c552453",
     "adminUsername": "admin",
     "adminPassword": "CHANGE_ME",
-    "applicationName": "AAA Service",
+    "applicationName": "SnapAuth",
     "applicationId": "CHANGE_ME",
     "apiKeyId": "CHANGE_ME",
     "apiKey": "CHANGE_ME"
@@ -12,7 +12,7 @@
     {
       "id": "#{apiKeyId}",
       "key": "#{apiKey}",
-      "description": "AAA Service API Key"
+      "description": "SnapAuth API Key"
     }
   ],
   "requests": [
@@ -22,7 +22,7 @@
       "body": {
         "key": {
           "algorithm": "RS256",
-          "name": "AAA Service Signing Key",
+          "name": "SnapAuth Signing Key",
           "length": 2048
         }
       }

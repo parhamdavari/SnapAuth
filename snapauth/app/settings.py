@@ -29,6 +29,11 @@ class Settings(BaseSettings):
         description="FusionAuth application ID"
     )
 
+    fusionauth_client_secret: str = Field(
+        default="changeme-client-secret",
+        description="FusionAuth application client secret"
+    )
+
     jwt_expected_iss: str = Field(
         default="localhost:9011",
         description="Expected JWT issuer for token verification"
