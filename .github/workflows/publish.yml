@@ -6,7 +6,8 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
+  APP_IMAGE_NAME: ${{ github.repository_owner }}/snapauth-app
+  BOOTSTRAP_IMAGE_NAME: ${{ github.repository_owner }}/snapauth-bootstrap
 
 jobs:
   publish:
@@ -29,24 +30,45 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract image metadata
-        id: meta
+      - name: Extract metadata (app)
+        id: meta_app
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          images: ${{ env.REGISTRY }}/${{ env.APP_IMAGE_NAME }}
           tags: |
             type=raw,value=latest
             type=sha
 
-      - name: Build and push
-        id: build
+      - name: Build and push app image
+        id: build_app
         uses: docker/build-push-action@v5
         with:
           context: ./snapauth
           file: snapauth/Dockerfile
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          tags: ${{ steps.meta_app.outputs.tags }}
+          labels: ${{ steps.meta_app.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Extract metadata (bootstrap)
+        id: meta_bootstrap
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.BOOTSTRAP_IMAGE_NAME }}
+          tags: |
+            type=raw,value=latest
+            type=sha
+
+      - name: Build and push bootstrap image
+        id: build_bootstrap
+        uses: docker/build-push-action@v5
+        with:
+          context: ./scripts
+          file: scripts/Dockerfile.bootstrap
+          push: true
+          tags: ${{ steps.meta_bootstrap.outputs.tags }}
+          labels: ${{ steps.meta_bootstrap.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -54,7 +76,8 @@ jobs:
         id: release_prep
         run: |
           echo "tag=snapauth-$(git rev-parse --short $GITHUB_SHA)" >> "$GITHUB_OUTPUT"
-          echo "digest=${{ steps.build.outputs.digest }}" >> "$GITHUB_OUTPUT"
+          echo "app_digest=${{ steps.build_app.outputs.digest }}" >> "$GITHUB_OUTPUT"
+          echo "bootstrap_digest=${{ steps.build_bootstrap.outputs.digest }}" >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -67,12 +90,13 @@ jobs:
           prerelease: false
           files: |
             snapauth/Dockerfile
+            scripts/Dockerfile.bootstrap
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Annotate release with image digest
         run: |
           gh release edit "${{ steps.release_prep.outputs.tag }}" \
-            --notes "Image digest: ${{ steps.release_prep.outputs.digest }}"
+            --notes "App image digest: ${{ steps.release_prep.outputs.app_digest }}\nBootstrap image digest: ${{ steps.release_prep.outputs.bootstrap_digest }}"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
