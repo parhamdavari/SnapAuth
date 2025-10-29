@@ -2,6 +2,7 @@
 CLAUDE.md
 .claude/
 .mcp.json
+AGENTS.md
 
 # FusionAuth kickstart (contains secrets)
 kickstart/
@@ -31,7 +32,7 @@ share/python-wheels/
 MANIFEST
 
 # Virtual environments
-.env
+.env.local
 .venv
 env/
 venv/

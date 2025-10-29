@@ -35,8 +35,8 @@ class Settings(BaseSettings):
     )
 
     jwt_expected_iss: str = Field(
-        default="localhost:9011",
-        description="Expected JWT issuer for token verification"
+        default="http://fusionauth:9011",
+        description="Expected JWT issuer for token verification (FusionAuth internal issuer)"
     )
 
     jwt_expected_aud: str = Field(

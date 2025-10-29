@@ -1,0 +1,10 @@
+FROM python:3.12-slim
+
+# Copy bootstrap script to a location outside the workspace mount
+COPY ./bootstrap.py /app/bootstrap.py
+
+# Set working directory to workspace (will be mounted by compose)
+WORKDIR /workspace
+
+# Run bootstrap from the copied location
+CMD ["python", "/app/bootstrap.py"]

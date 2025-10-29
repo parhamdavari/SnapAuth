@@ -2,6 +2,7 @@
 """Generate environment secrets and FusionAuth kickstart configuration."""
 from __future__ import annotations
 
+import argparse
 import json
 import secrets
 import sys
@@ -66,7 +67,6 @@ KEY_ORDER = [
     "FUSIONAUTH_AUTHORIZED_REDIRECT_URLS",
     "FUSIONAUTH_APP_MEMORY",
     "FUSIONAUTH_APP_RUNTIME_MODE",
-    "JWT_EXPECTED_ISS",
     "JWT_EXPECTED_AUD",
     "JWKS_CACHE_TTL_SECONDS",
     "SNAPAUTH_SERVICE_PORT",
@@ -116,9 +116,13 @@ def is_missing(key: str, value: str | None) -> bool:
 
 
 def derive_jwt_iss(base_url: str) -> str:
+    # JWT issuer is FusionAuth's internal URL (http://fusionauth:9011)
+    # This is what FusionAuth uses when signing tokens
+    # Consuming services will verify tokens against this issuer
+    # NOT against SnapAuth's external URL (http://snapauth:8080)
     base = base_url.strip()
     if not base:
-        return "http://fusionauth:9011"
+        return "http://fusionauth:9011"  # Default: FusionAuth internal issuer
     parsed = urlparse(base)
     if parsed.scheme and parsed.netloc:
         return f"{parsed.scheme}://{parsed.netloc}".rstrip("/")
@@ -167,7 +171,7 @@ def render_kickstart(path: Path, env: Dict[str, str]) -> None:
             "apiKeyId": env["FUSIONAUTH_API_KEY_ID"],
             "apiKey": env["FUSIONAUTH_API_KEY"],
             "clientSecret": env["FUSIONAUTH_CLIENT_SECRET"],
-            "issuer": env["JWT_EXPECTED_ISS"],
+            "issuer": env["FUSIONAUTH_BASE_URL"],  # FusionAuth internal issuer
         },
         "apiKeys": [
             {
@@ -274,10 +278,53 @@ def render_kickstart(path: Path, env: Dict[str, str]) -> None:
     }
 
     path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        pass
+    except PermissionError as exc:
+        raise SystemExit(
+            f"Cannot update {path}: remove it manually or fix permissions."
+        ) from exc
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
-def main() -> None:
+def print_summary(env: Dict[str, str], *, generated: bool) -> None:
+    green = "\033[92m"
+    bold = "\033[1m"
+    reset = "\033[0m"
+
+    print()
+    if generated:
+        headline = "✓ FusionAuth bootstrap complete"
+    else:
+        headline = "✓ FusionAuth credentials loaded"
+    print(f"{bold}{green}{headline}{reset}")
+    print(f"{bold}FusionAuth access{reset}")
+    print("-" * 18)
+    print(f"  URL:          {env['FUSIONAUTH_BASE_URL']}")
+    print(f"  Admin user:   {env['FUSIONAUTH_ADMIN_USERNAME']}")
+    print(f"  Admin pass:   {env['FUSIONAUTH_ADMIN_PASSWORD']}")
+    print(f"  Application:  {env['FUSIONAUTH_APPLICATION_ID']}")
+    print(f"  Client secret:{env['FUSIONAUTH_CLIENT_SECRET']}")
+    print(f"  API key:      {env['FUSIONAUTH_API_KEY']}")
+
+    print()
+    print(f"{bold}Database connection{reset}")
+    print("-" * 19)
+    print(f"  Host:         {env['DB_HOST']}:{env['DB_PORT']}")
+    print(f"  Name:         {env['DB_NAME']}")
+    print(f"  User:         {env['DB_USER']}")
+    print(f"  Password:     {env['DB_PASSWORD']}")
+
+    if generated:
+        print()
+        print(f"{bold}Artifacts{reset}")
+        print("-" * 9)
+        print("  Updated .env and kickstart/kickstart.json with generated secrets.")
+
+
+def bootstrap() -> Dict[str, str]:
     env = parse_env(ENV_FILE)
 
     for key, default in DEFAULTS.items():
@@ -294,9 +341,9 @@ def main() -> None:
     if is_missing("JWT_EXPECTED_AUD", env.get("JWT_EXPECTED_AUD")):
         env["JWT_EXPECTED_AUD"] = env["FUSIONAUTH_APPLICATION_ID"]
 
-    if is_missing("JWT_EXPECTED_ISS", env.get("JWT_EXPECTED_ISS")):
-        env["JWT_EXPECTED_ISS"] = derive_jwt_iss(env["FUSIONAUTH_BASE_URL"])
-
+    # JWT_EXPECTED_ISS is derived from SNAPAUTH_URL and not stored in .env
+    # Consuming services should use: JWT_EXPECTED_ISS=$SNAPAUTH_URL
+    
     missing_required = [key for key in REQUIRED_KEYS if is_missing(key, env.get(key))]
     if missing_required:
         joined = ", ".join(missing_required)
@@ -305,7 +352,30 @@ def main() -> None:
     write_env(ENV_FILE, env)
     render_kickstart(KICKSTART_PATH, env)
 
-    print("Updated .env and kickstart/kickstart.json with generated secrets.")
+    return env
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Bootstrap FusionAuth configuration.")
+    parser.add_argument(
+        "--show",
+        action="store_true",
+        help="Display stored credentials without regenerating files.",
+    )
+    args = parser.parse_args()
+
+    if args.show:
+        env = parse_env(ENV_FILE)
+        if not env:
+            raise SystemExit("No .env found. Run bootstrap first to generate credentials.")
+        missing_required = [key for key in REQUIRED_KEYS if is_missing(key, env.get(key))]
+        if missing_required:
+            raise SystemExit("Incomplete .env; run bootstrap to regenerate secrets.")
+        print_summary(env, generated=False)
+        return
+
+    env = bootstrap()
+    print_summary(env, generated=True)
 
 
 if __name__ == "__main__":

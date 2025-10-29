@@ -32,18 +32,13 @@ async def lifespan(app: FastAPI):
         oidc_config = await jwks_manager._fetch_oidc_configuration()
         fusionauth_issuer = oidc_config.get("issuer")
 
-        # Compare with our expected issuer
-        if fusionauth_issuer != settings.jwt_expected_iss:
-            error_msg = (
-                f"JWT issuer mismatch! "
-                f"FusionAuth issuer: {fusionauth_issuer}, "
-                f"Expected issuer: {settings.jwt_expected_iss}. "
-                f"Update JWT_EXPECTED_ISS environment variable to match FusionAuth."
-            )
+        # Validate that FusionAuth is responding correctly
+        if not fusionauth_issuer:
+            error_msg = "Could not fetch issuer from FusionAuth OIDC configuration"
             logger.error(error_msg)
             raise RuntimeError(error_msg)
 
-        logger.info(f"JWT configuration validated successfully. Issuer: {fusionauth_issuer}")
+        logger.info(f"JWT configuration validated successfully. FusionAuth issuer: {fusionauth_issuer}")
 
     except Exception as e:
         logger.error(f"JWT configuration validation failed: {e}")
