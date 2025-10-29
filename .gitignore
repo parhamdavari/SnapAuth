@@ -39,6 +39,7 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+.env
 
 # IDE
 .vscode/
@@ -46,6 +47,7 @@ venv.bak/
 *.swp
 *.swo
 *~
+pyrightconfig.json
 
 # OS
 .DS_Store
