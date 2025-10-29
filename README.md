@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="media/snapauth-hero.png" alt="SnapAuth logo" width="320" />
+</p>
+
 # SnapAuth
 
 SnapAuth is a composed, resilient wrapper around identity providers. It speaks one voice to your services, contains the complexity inside, and scales without begging upstream auth for every verification. The surface stays small, the guarantees stay strong.
@@ -33,3 +37,10 @@ flowchart TD
     jwks --> jose["python-jose<br/>signature check"]
     jwks --> cache["cachetools TTL cache"]
 ```
+
+> Place the hero image at `media/snapauth-hero.png`. Optional crop helper:
+>
+> ```bash
+> magick input.png -gravity center -resize 1200x1200^ -extent 1200x1200 \
+>        -strip -define png:color-type=6 media/snapauth-hero.png
+> ```
