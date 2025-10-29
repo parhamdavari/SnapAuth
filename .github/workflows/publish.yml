@@ -6,7 +6,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  APP_IMAGE_NAME: ${{ github.repository_owner }}/snapauth-app
+  APP_IMAGE_NAME: ${{ github.repository_owner }}/snapauth
   BOOTSTRAP_IMAGE_NAME: ${{ github.repository_owner }}/snapauth-bootstrap
 
 jobs:
