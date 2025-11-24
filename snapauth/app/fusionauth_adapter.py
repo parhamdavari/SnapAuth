@@ -188,6 +188,22 @@ class FusionAuthAdapter:
             logger.warning(f"Server-side logout failed, but client-side logout successful: {e}")
             # Don't raise exception - logout is considered successful
 
+    @retry(
+        reraise=True,
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=4, max=10),
+    )
+    def delete_user(self, user_id: str) -> None:
+        """Delete a user in FusionAuth by ID"""
+        try:
+            response = self.client.delete_user(user_id)
+            self._handle_response(response)
+        except FusionAuthError:
+            raise
+        except Exception as e:
+            logger.error(f"Error deleting user: {e}")
+            raise FusionAuthError(f"Failed to delete user: {str(e)}")
+
 
 # Global adapter instance
 fusionauth_adapter = FusionAuthAdapter()

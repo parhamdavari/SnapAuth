@@ -1,5 +1,6 @@
 import httpx
 import logging
+from uuid import UUID
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Dict, Any
@@ -176,6 +177,21 @@ async def create_user(user_request: UserCreateRequest):
         raise
     except Exception as e:
         logger.error(f"Unexpected error creating user: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error"
+        )
+
+
+@app.delete("/v1/users/{user_id}", response_model=None, status_code=status.HTTP_204_NO_CONTENT)
+async def delete_user(user_id: UUID, _current_user: Dict[str, Any] = Depends(get_current_user)):
+    """Delete a user from FusionAuth by ID"""
+    try:
+        fusionauth_adapter.delete_user(str(user_id))
+    except FusionAuthError:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error deleting user: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal server error"
