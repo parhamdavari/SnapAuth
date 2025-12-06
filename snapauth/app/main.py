@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse
 from .schemas import (
     UserCreateRequest, UserCreateResponse, LoginRequest, TokenResponse,
     RefreshTokenRequest, RefreshTokenResponse, UserInfoResponse,
-    LogoutRequest, HealthResponse
+    LogoutRequest, HealthResponse, UserUpdateRequest, UserUpdateResponse
 )
 from .fusionauth_adapter import fusionauth_adapter, FusionAuthError
 from .jwks import jwks_manager, JWTVerificationError, JWKSError
@@ -192,6 +192,52 @@ async def delete_user(user_id: UUID, _current_user: Dict[str, Any] = Depends(get
         raise
     except Exception as e:
         logger.error(f"Unexpected error deleting user: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error"
+        )
+
+
+@app.patch("/v1/users/{user_id}", response_model=UserUpdateResponse)
+async def update_user(
+    user_id: UUID,
+    update_request: UserUpdateRequest,
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """
+    Update user information (self-only).
+
+    Users can only update their own profile. Supports partial updates
+    for username, password, and metadata fields.
+    """
+    try:
+        # Authorization: users can only update themselves
+        if str(user_id) != current_user.get("sub"):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You can only update your own profile"
+            )
+
+        # Perform the update
+        updated_user = fusionauth_adapter.update_user(
+            user_id=str(user_id),
+            username=update_request.username,
+            password=update_request.password,
+            metadata=update_request.metadata
+        )
+
+        return UserUpdateResponse(
+            userId=updated_user.get("id"),
+            username=updated_user.get("username"),
+            metadata=updated_user.get("data", {})
+        )
+
+    except FusionAuthError:
+        raise
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error updating user: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal server error"

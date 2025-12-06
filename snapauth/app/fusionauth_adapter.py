@@ -204,6 +204,61 @@ class FusionAuthAdapter:
             logger.error(f"Error deleting user: {e}")
             raise FusionAuthError(f"Failed to delete user: {str(e)}")
 
+    @retry(
+        reraise=True,
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=4, max=10),
+    )
+    def update_user(
+        self,
+        user_id: str,
+        username: Optional[str] = None,
+        password: Optional[str] = None,
+        metadata: Optional[Dict[str, Optional[str]]] = None
+    ) -> Dict[str, Any]:
+        """
+        Update user information in FusionAuth using PATCH.
+
+        Args:
+            user_id: The UUID of the user to update
+            username: New username (optional)
+            password: New password (optional)
+            metadata: Metadata dict to merge (optional, null values remove keys)
+
+        Returns:
+            Dict containing updated user information
+
+        Raises:
+            FusionAuthError: If the update fails
+        """
+        try:
+            # Build the user update object with only provided fields
+            user_update: Dict[str, Any] = {}
+
+            if username is not None:
+                user_update["username"] = username
+
+            if password is not None:
+                user_update["password"] = password
+
+            if metadata is not None:
+                user_update["data"] = metadata
+
+            # FusionAuth expects request wrapped in "user" key
+            request = {"user": user_update}
+
+            # Use patch_user for partial updates
+            response = self.client.patch_user(user_id, request)
+            result = self._handle_response(response)
+
+            return result.get("user", {})
+
+        except FusionAuthError:
+            raise
+        except Exception as e:
+            logger.error(f"Error updating user: {e}")
+            raise FusionAuthError(f"Failed to update user: {str(e)}")
+
 
 # Global adapter instance
 fusionauth_adapter = FusionAuthAdapter()

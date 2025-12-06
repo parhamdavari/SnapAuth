@@ -1,5 +1,5 @@
 from typing import List, Optional, Dict
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class UserCreateRequest(BaseModel):
@@ -11,6 +11,29 @@ class UserCreateRequest(BaseModel):
 
 class UserCreateResponse(BaseModel):
     userId: str = Field(..., description="Created user ID")
+
+
+class UserUpdateRequest(BaseModel):
+    """Request schema for updating user information via PATCH"""
+    username: Optional[str] = Field(None, min_length=3, description="New username")
+    password: Optional[str] = Field(None, min_length=8, description="New password")
+    metadata: Optional[Dict[str, Optional[str]]] = Field(
+        None, description="Metadata to merge (set value to null to remove a key)"
+    )
+
+    @model_validator(mode='after')
+    def check_at_least_one_field(self) -> 'UserUpdateRequest':
+        """Ensure at least one field is provided for update"""
+        if self.username is None and self.password is None and self.metadata is None:
+            raise ValueError('At least one field must be provided for update')
+        return self
+
+
+class UserUpdateResponse(BaseModel):
+    """Response schema for successful user update"""
+    userId: str = Field(..., description="Updated user ID")
+    username: Optional[str] = Field(None, description="Updated username")
+    metadata: Optional[Dict[str, str]] = Field(None, description="Updated metadata")
 
 
 class LoginRequest(BaseModel):
