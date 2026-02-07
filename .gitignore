@@ -3,6 +3,7 @@ CLAUDE.md
 .claude/
 .mcp.json
 AGENTS.md
+docs/prds
 
 # FusionAuth kickstart (contains secrets)
 kickstart/

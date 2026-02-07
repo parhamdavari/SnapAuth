@@ -4,9 +4,11 @@ from uuid import UUID
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Dict, Any
-from fastapi import FastAPI, HTTPException, Depends, status
+from fastapi import FastAPI, HTTPException, Depends, status, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.responses import JSONResponse
+from slowapi.errors import RateLimitExceeded
 
 from .schemas import (
     UserCreateRequest, UserCreateResponse, LoginRequest, TokenResponse,
@@ -16,6 +18,10 @@ from .schemas import (
 from .fusionauth_adapter import fusionauth_adapter, FusionAuthError
 from .jwks import jwks_manager, JWTVerificationError, JWKSError
 from .settings import settings
+from .security.middleware import SecurityHeadersMiddleware
+from .security.rate_limit import limiter, rate_limit_auth, rate_limit_admin, rate_limit_authenticated
+from .security.dependencies import require_admin_access, require_self_or_admin
+from .security.audit import log_audit_event
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -59,6 +65,21 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+# Add security headers middleware
+app.add_middleware(SecurityHeadersMiddleware)
+
+# CORS middleware - allows frontend to call auth endpoints
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.cors_origins_list,
+    allow_credentials=settings.cors_allow_credentials,
+    allow_methods=settings.cors_methods_list,
+    allow_headers=settings.cors_headers_list,
+)
+
+# Register rate limiter with app
+app.state.limiter = limiter
+
 # Security scheme
 security = HTTPBearer()
 
@@ -87,11 +108,25 @@ async def jwks_exception_handler(_request, exc: JWKSError):
     )
 
 
+@app.exception_handler(RateLimitExceeded)
+async def rate_limit_exception_handler(request: Request, exc: RateLimitExceeded):
+    """Handle rate limit exceeded errors"""
+    return JSONResponse(
+        status_code=429,
+        content={
+            "error": "Rate limit exceeded",
+            "detail": "Too many requests. Please try again later."
+        },
+        headers={"Retry-After": str(60)}  # Suggest retry after 60 seconds
+    )
+
+
 async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)) -> Dict[str, Any]:
     """Extract and verify JWT token from Authorization header"""
     try:
         token = credentials.credentials
-        logger.info(f"Attempting JWT verification for token: {token[:20]}...")
+        # SECURITY: Never log token content
+        logger.info("Attempting JWT verification")
         payload = await jwks_manager.verify_jwt(token)
         logger.info(f"JWT verified successfully for user: {payload.get('sub')}")
         return payload
@@ -156,9 +191,13 @@ async def jwt_config_health_check():
         )
 
 
-@app.post("/v1/users", response_model=UserCreateResponse, status_code=status.HTTP_201_CREATED)
-async def create_user(user_request: UserCreateRequest):
-    """Create a new user and optionally register to application with roles"""
+@app.post("/v1/users", response_model=UserCreateResponse, status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_admin_access)])
+@rate_limit_admin()
+async def create_user(request: Request, user_request: UserCreateRequest, admin_access: Dict = Depends(require_admin_access)):
+    """Create a new user and optionally register to application with roles
+
+    REQUIRES: Admin API key authentication (X-SnapAuth-API-Key header)
+    """
     try:
         # Create user in FusionAuth
         user_id = fusionauth_adapter.create_user(
@@ -170,6 +209,19 @@ async def create_user(user_request: UserCreateRequest):
         # Register user to application with roles if application ID is configured
         if settings.fusionauth_application_id and user_request.roles:
             fusionauth_adapter.register_user(user_id, user_request.roles)
+
+        # Audit log: user creation
+        log_audit_event(
+            event_type="user.created",
+            request=request,
+            user_id=user_id,
+            success=True,
+            details={
+                "username": user_request.username,
+                "roles": user_request.roles or [],
+                "admin_ip": admin_access.get("client_ip")
+            }
+        )
 
         return UserCreateResponse(userId=user_id)
 
@@ -184,10 +236,61 @@ async def create_user(user_request: UserCreateRequest):
 
 
 @app.delete("/v1/users/{user_id}", response_model=None, status_code=status.HTTP_204_NO_CONTENT)
-async def delete_user(user_id: UUID, _current_user: Dict[str, Any] = Depends(get_current_user)):
-    """Delete a user from FusionAuth by ID"""
+@rate_limit_authenticated()
+async def delete_user(request: Request, user_id: UUID):
+    """Delete a user from FusionAuth by ID
+
+    AUTHORIZATION: Users can only delete their own account, OR admin API key required
+    """
+    try:
+        # Check authorization: self-service OR admin
+        auth_info = await require_self_or_admin(request, str(user_id))
+
+        fusionauth_adapter.delete_user(str(user_id))
+
+        # Audit log: user deletion
+        log_audit_event(
+            event_type="user.deleted",
+            request=request,
+            user_id=str(user_id),
+            success=True,
+            details={
+                "auth_type": auth_info.get("auth_type"),  # "self" or "admin"
+            }
+        )
+
+    except FusionAuthError:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error deleting user: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error"
+        )
+
+
+@app.delete("/v1/admin/users/{user_id}", response_model=None, status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(require_admin_access)])
+@rate_limit_admin()
+async def admin_delete_user(request: Request, user_id: UUID, admin_access: Dict = Depends(require_admin_access)):
+    """Admin force delete: Delete any user by ID
+
+    REQUIRES: Admin API key authentication (X-SnapAuth-API-Key header)
+    """
     try:
         fusionauth_adapter.delete_user(str(user_id))
+
+        # Audit log: admin force deletion
+        log_audit_event(
+            event_type="user.deleted",
+            request=request,
+            user_id=str(user_id),
+            success=True,
+            details={
+                "type": "admin_force",
+                "admin_ip": admin_access.get("client_ip")
+            }
+        )
+
     except FusionAuthError:
         raise
     except Exception as e:
@@ -245,17 +348,37 @@ async def update_user(
 
 
 @app.post("/v1/auth/login", response_model=TokenResponse)
-async def login(login_request: LoginRequest):
-    """Authenticate user and return JWT tokens"""
+@rate_limit_auth()
+async def login(request: Request, login_request: LoginRequest):
+    """Authenticate user and return JWT tokens
+
+    RATE LIMITED: 10 requests per minute to prevent brute force attacks
+    """
     try:
         result = fusionauth_adapter.login(
             username=login_request.username,
             password=login_request.password
         )
 
+        # Audit log: successful login
+        log_audit_event(
+            event_type="user.login",
+            request=request,
+            user_id=result.get("userId"),
+            success=True,
+            details={"username": login_request.username}
+        )
+
         return TokenResponse(**result)
 
-    except FusionAuthError:
+    except FusionAuthError as e:
+        # Audit log: failed login attempt
+        log_audit_event(
+            event_type="auth.failed",
+            request=request,
+            success=False,
+            details={"username": login_request.username, "reason": "invalid_credentials"}
+        )
         raise
     except Exception as e:
         logger.error(f"Unexpected error during login: {e}")

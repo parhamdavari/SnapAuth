@@ -7,3 +7,4 @@ python-jose==3.3.0
 cachetools==5.5.0
 tenacity==9.0.0
 fusionauth-client==1.50.0
+slowapi==0.1.9

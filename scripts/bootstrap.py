@@ -38,6 +38,7 @@ GENERATED_VALUES = {
     "FUSIONAUTH_ADMIN_PASSWORD": lambda: secrets.token_urlsafe(24),
     "FUSIONAUTH_ADMIN_USER_ID": lambda: str(uuid.uuid4()),
     "DB_PASSWORD": lambda: secrets.token_urlsafe(24),
+    "SNAPAUTH_ADMIN_API_KEY": lambda: secrets.token_urlsafe(32),  # SnapAuth admin API key (256-bit)
 }
 
 PLACEHOLDER_VALUES = {
@@ -70,6 +71,14 @@ KEY_ORDER = [
     "JWT_EXPECTED_AUD",
     "JWKS_CACHE_TTL_SECONDS",
     "SNAPAUTH_SERVICE_PORT",
+    # SnapAuth Security Configuration
+    "SNAPAUTH_ADMIN_API_KEY",
+    "ADMIN_ALLOWED_IPS",
+    "TRUST_PROXY",
+    "RATE_LIMIT_ENABLED",
+    "RATE_LIMIT_PER_MINUTE",
+    "RATE_LIMIT_PER_MINUTE_AUTH",
+    "RATE_LIMIT_PER_MINUTE_ADMIN",
     "DB_HOST",
     "DB_PORT",
     "DB_NAME",
@@ -317,11 +326,25 @@ def print_summary(env: Dict[str, str], *, generated: bool) -> None:
     print(f"  User:         {env['DB_USER']}")
     print(f"  Password:     {env['DB_PASSWORD']}")
 
+    print()
+    print(f"{bold}SnapAuth Security{reset}")
+    print("-" * 17)
+    print(f"  Admin API key:{env.get('SNAPAUTH_ADMIN_API_KEY', 'NOT SET')}")
+    print(f"  Allowed IPs:  {env.get('ADMIN_ALLOWED_IPS', 'NOT SET')}")
+    print(f"  Trust proxy:  {env.get('TRUST_PROXY', 'false')}")
+    print(f"  Rate limiting:{env.get('RATE_LIMIT_ENABLED', 'true')}")
+
     if generated:
         print()
         print(f"{bold}Artifacts{reset}")
         print("-" * 9)
         print("  Updated .env and kickstart/kickstart.json with generated secrets.")
+        print()
+        print(f"{bold}⚠️  Security Notice{reset}")
+        print("-" * 17)
+        print("  The SNAPAUTH_ADMIN_API_KEY is required for admin operations.")
+        print("  Store this securely and provide it via X-SnapAuth-API-Key header.")
+        print("  Default IP whitelist allows private networks (10.x, 172.16.x, 192.168.x).")
 
 
 def bootstrap() -> Dict[str, str]:
@@ -341,9 +364,29 @@ def bootstrap() -> Dict[str, str]:
     if is_missing("JWT_EXPECTED_AUD", env.get("JWT_EXPECTED_AUD")):
         env["JWT_EXPECTED_AUD"] = env["FUSIONAUTH_APPLICATION_ID"]
 
+    # SnapAuth Security Configuration Defaults
+    # Set default allowed IPs to private network ranges (RFC 1918)
+    if is_missing("ADMIN_ALLOWED_IPS", env.get("ADMIN_ALLOWED_IPS")):
+        env["ADMIN_ALLOWED_IPS"] = "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
+
+    if is_missing("TRUST_PROXY", env.get("TRUST_PROXY")):
+        env["TRUST_PROXY"] = "false"
+
+    if is_missing("RATE_LIMIT_ENABLED", env.get("RATE_LIMIT_ENABLED")):
+        env["RATE_LIMIT_ENABLED"] = "true"
+
+    if is_missing("RATE_LIMIT_PER_MINUTE", env.get("RATE_LIMIT_PER_MINUTE")):
+        env["RATE_LIMIT_PER_MINUTE"] = "60"
+
+    if is_missing("RATE_LIMIT_PER_MINUTE_AUTH", env.get("RATE_LIMIT_PER_MINUTE_AUTH")):
+        env["RATE_LIMIT_PER_MINUTE_AUTH"] = "10"
+
+    if is_missing("RATE_LIMIT_PER_MINUTE_ADMIN", env.get("RATE_LIMIT_PER_MINUTE_ADMIN")):
+        env["RATE_LIMIT_PER_MINUTE_ADMIN"] = "30"
+
     # JWT_EXPECTED_ISS is derived from SNAPAUTH_URL and not stored in .env
     # Consuming services should use: JWT_EXPECTED_ISS=$SNAPAUTH_URL
-    
+
     missing_required = [key for key in REQUIRED_KEYS if is_missing(key, env.get(key))]
     if missing_required:
         joined = ", ".join(missing_required)
