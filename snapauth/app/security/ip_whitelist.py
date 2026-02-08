@@ -9,7 +9,7 @@ from typing import Set, Union
 
 from fastapi import HTTPException, Request, status
 
-from snapauth.app.settings import settings
+from ..settings import settings
 
 
 def parse_ip_whitelist() -> Set[Union[ipaddress.IPv4Network, ipaddress.IPv6Network]]:

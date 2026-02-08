@@ -10,7 +10,7 @@ from typing import Optional
 from fastapi import Header, HTTPException, Request, status
 from fastapi.security import APIKeyHeader
 
-from snapauth.app.settings import settings
+from ..settings import settings
 
 # Define API key header scheme
 api_key_header_scheme = APIKeyHeader(name="X-SnapAuth-API-Key", auto_error=False)

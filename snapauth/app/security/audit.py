@@ -13,7 +13,7 @@ from typing import Dict, Optional
 
 from fastapi import Request
 
-from snapauth.app.security.ip_whitelist import get_client_ip
+from .ip_whitelist import get_client_ip
 
 # Configure logger for audit events
 audit_logger = logging.getLogger("snapauth.audit")

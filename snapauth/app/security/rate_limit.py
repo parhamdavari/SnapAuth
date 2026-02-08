@@ -11,9 +11,9 @@ from slowapi import Limiter
 from slowapi.util import get_remote_address
 from fastapi import Request
 
-from snapauth.app.settings import settings
-from snapauth.app.security.ip_whitelist import get_client_ip
-from snapauth.app.security.api_key import redact_api_key
+from ..settings import settings
+from .ip_whitelist import get_client_ip
+from .api_key import redact_api_key
 
 
 def get_client_identifier(request: Request) -> str:

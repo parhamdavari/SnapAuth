@@ -10,9 +10,9 @@ from typing import Dict, Optional
 from fastapi import Depends, HTTPException, Request, status
 from jose import JWTError, jwt
 
-from snapauth.app.security.api_key import require_admin_api_key, verify_api_key
-from snapauth.app.security.ip_whitelist import require_ip_whitelist
-from snapauth.app.settings import settings
+from .api_key import require_admin_api_key, verify_api_key
+from .ip_whitelist import require_ip_whitelist
+from ..settings import settings
 
 
 async def require_admin_access(

@@ -8,7 +8,7 @@ This module provides authentication, authorization, and security features:
 - Audit logging for compliance
 """
 
-from snapauth.app.security.dependencies import (
+from .dependencies import (
     require_admin_access,
     require_self_or_admin,
 )
