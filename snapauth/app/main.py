@@ -62,7 +62,10 @@ app = FastAPI(
     title="SnapAuth",
     description="Minimal authentication and authorization facade for FusionAuth",
     version="1.0.0",
-    lifespan=lifespan
+    lifespan=lifespan,
+    # Disable Swagger UI and ReDoc in production for security
+    docs_url="/docs" if settings.environment != "production" else None,
+    redoc_url="/redoc" if settings.environment != "production" else None,
 )
 
 # Add security headers middleware
