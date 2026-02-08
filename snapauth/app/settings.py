@@ -126,6 +126,11 @@ class Settings(BaseSettings):
         description="Rate limit for admin endpoints (requests per minute)"
     )
 
+    environment: str = Field(
+        default="production",
+        description="Application environment (development, staging, production)"
+    )
+
     @property
     def admin_api_keys_list(self) -> list[str]:
         """Get list of valid admin API keys (supports both single and multiple keys)"""
