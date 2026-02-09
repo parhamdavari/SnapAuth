@@ -264,6 +264,8 @@ async def delete_user(request: Request, user_id: UUID):
 
     except FusionAuthError:
         raise
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Unexpected error deleting user: {e}")
         raise HTTPException(
