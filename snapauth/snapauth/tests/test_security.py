@@ -11,11 +11,12 @@ Tests cover:
 
 import pytest
 from fastapi.testclient import TestClient
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, AsyncMock, PropertyMock
 import json
 
 from snapauth.app.main import app
-from snapauth.app.settings import settings
+from snapauth.app.settings import settings, Settings
+from snapauth.app.jwks import JWTVerificationError
 
 
 @pytest.fixture
@@ -33,7 +34,7 @@ def valid_api_key():
 @pytest.fixture
 def mock_settings_with_api_key(valid_api_key):
     """Mock settings with admin API key configured"""
-    with patch.object(settings, 'admin_api_keys_list', return_value=[valid_api_key]):
+    with patch.object(Settings, 'admin_api_keys_list', new_callable=PropertyMock, return_value=[valid_api_key]):
         yield
 
 
@@ -96,6 +97,9 @@ class TestAPIKeyAuthentication:
 class TestAuthorization:
     """Test authorization rules for user-specific endpoints"""
 
+    USER_A_ID = "00000000-0000-0000-0000-000000000001"
+    USER_B_ID = "00000000-0000-0000-0000-000000000002"
+
     @pytest.fixture
     def mock_jwt_token(self):
         """Mock JWT token for user authentication"""
@@ -103,21 +107,73 @@ class TestAuthorization:
 
     def test_user_cannot_delete_others(self, client, mock_jwt_token, mock_fusionauth_adapter):
         """Test that users cannot delete other users' accounts"""
-        # Mock JWT verification to return different user ID
-        with patch('snapauth.app.main.jwks_manager.verify_jwt') as mock_verify:
-            mock_verify.return_value = {"sub": "user-123"}  # Different from URL
+        with patch('snapauth.app.security.dependencies.jwks_manager.verify_jwt', new_callable=AsyncMock) as mock_verify:
+            mock_verify.return_value = {"sub": self.USER_A_ID}
 
             response = client.delete(
-                "/v1/users/other-user-456",
+                f"/v1/users/{self.USER_B_ID}",
                 headers={"Authorization": mock_jwt_token}
             )
             assert response.status_code == 403
             assert "only access your own" in response.json()["detail"]
+            mock_verify.assert_called_once()
+
+    def test_valid_self_delete(self, client, mock_jwt_token, mock_fusionauth_adapter):
+        """Test that a user can delete their own account with a valid JWT"""
+        with patch('snapauth.app.security.dependencies.jwks_manager.verify_jwt', new_callable=AsyncMock) as mock_verify:
+            mock_verify.return_value = {"sub": self.USER_A_ID}
+
+            response = client.delete(
+                f"/v1/users/{self.USER_A_ID}",
+                headers={"Authorization": mock_jwt_token}
+            )
+            assert response.status_code == 204
+            mock_verify.assert_called_once()
+            mock_fusionauth_adapter.delete_user.assert_called_once_with(self.USER_A_ID)
+
+    def test_expired_jwt_rejected(self, client, mock_jwt_token, mock_fusionauth_adapter):
+        """Test that expired JWT tokens are rejected with 401"""
+        with patch('snapauth.app.security.dependencies.jwks_manager.verify_jwt', new_callable=AsyncMock) as mock_verify:
+            mock_verify.side_effect = JWTVerificationError("JWT verification failed: token is expired")
+
+            response = client.delete(
+                f"/v1/users/{self.USER_A_ID}",
+                headers={"Authorization": mock_jwt_token}
+            )
+            assert response.status_code == 401
+            assert "Invalid JWT token" in response.json()["detail"]
+
+    def test_forged_jwt_rejected(self, client, mock_jwt_token, mock_fusionauth_adapter):
+        """Test that forged/invalid signature JWT tokens are rejected with 401"""
+        with patch('snapauth.app.security.dependencies.jwks_manager.verify_jwt', new_callable=AsyncMock) as mock_verify:
+            mock_verify.side_effect = JWTVerificationError("JWT verification failed: signature verification failed")
+
+            response = client.delete(
+                f"/v1/users/{self.USER_A_ID}",
+                headers={"Authorization": mock_jwt_token}
+            )
+            assert response.status_code == 401
+            assert "Invalid JWT token" in response.json()["detail"]
+
+    def test_no_credentials_rejected(self, client, mock_fusionauth_adapter):
+        """Test that requests without any credentials are rejected with 403"""
+        response = client.delete(f"/v1/users/{self.USER_A_ID}")
+        assert response.status_code == 403
+        assert "Must provide valid JWT token or admin API key" in response.json()["detail"]
+
+    def test_admin_api_key_bypass_on_user_delete(self, client, mock_settings_with_api_key, valid_api_key, mock_fusionauth_adapter):
+        """Test that admin API key allows deleting any user via /v1/users/ endpoint"""
+        response = client.delete(
+            f"/v1/users/{self.USER_B_ID}",
+            headers={"X-SnapAuth-API-Key": valid_api_key}
+        )
+        assert response.status_code == 204
+        mock_fusionauth_adapter.delete_user.assert_called_once_with(self.USER_B_ID)
 
     def test_admin_can_delete_any_user(self, client, mock_settings_with_api_key, valid_api_key, mock_fusionauth_adapter):
-        """Test that admin API key allows deleting any user"""
+        """Test that admin API key allows deleting any user via admin endpoint"""
         response = client.delete(
-            "/v1/admin/users/any-user-id",
+            f"/v1/admin/users/{self.USER_B_ID}",
             headers={"X-SnapAuth-API-Key": valid_api_key}
         )
         assert response.status_code == 204

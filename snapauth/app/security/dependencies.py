@@ -8,11 +8,10 @@ Provides reusable FastAPI dependencies that combine multiple security checks:
 from typing import Dict, Optional
 
 from fastapi import Depends, HTTPException, Request, status
-from jose import JWTError, jwt
-
 from .api_key import require_admin_api_key, verify_api_key
 from .ip_whitelist import require_ip_whitelist
 from ..settings import settings
+from ..jwks import jwks_manager, JWTVerificationError
 
 
 async def require_admin_access(
@@ -60,28 +59,22 @@ def extract_jwt_token(request: Request) -> Optional[str]:
     return None
 
 
-def decode_jwt_token(token: str) -> Optional[Dict]:
-    """Decode JWT token without verification (for extracting claims only).
+async def decode_jwt_token(token: str) -> Optional[Dict]:
+    """Verify and decode a JWT token using JWKS-based cryptographic verification.
 
-    This is used to extract the 'sub' claim to check user ownership.
-    Full token verification is done elsewhere in the application.
+    Delegates to jwks_manager.verify_jwt() which validates the token's
+    signature, expiration, and issuer against the JWKS public keys.
 
     Args:
         token: JWT token string
 
     Returns:
-        Dictionary of JWT claims, or None if decode fails
+        Dictionary of verified JWT claims, or None if verification fails
     """
     try:
-        # Decode without verification (just extract claims)
-        # options={"verify_signature": False} allows us to read claims
-        # without needing the signing key
-        claims = jwt.decode(
-            token,
-            options={"verify_signature": False, "verify_aud": False, "verify_iss": False},
-        )
+        claims = await jwks_manager.verify_jwt(token)
         return claims
-    except JWTError:
+    except JWTVerificationError:
         return None
 
 
@@ -125,7 +118,7 @@ async def require_self_or_admin(
         )
 
     # Decode token to get user claims
-    claims = decode_jwt_token(token)
+    claims = await decode_jwt_token(token)
     if not claims:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
