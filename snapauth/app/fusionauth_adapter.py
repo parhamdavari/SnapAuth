@@ -9,12 +9,65 @@ logger = logging.getLogger(__name__)
 
 
 class FusionAuthError(Exception):
-    """Custom exception for FusionAuth errors"""
-    def __init__(self, message: str, status_code: Optional[int] = None, details: Optional[str] = None):
+    """Custom exception for FusionAuth errors with structured error details"""
+    def __init__(self, message: str, status_code: Optional[int] = None,
+                 errors: Optional[List[Dict[str, Any]]] = None):
         self.message = message
         self.status_code = status_code
-        self.details = details
+        self.errors = errors or [{"detail": message, "error_code": "AUTH_PROVIDER_ERROR",
+                                   "field": None, "original_value": None}]
         super().__init__(self.message)
+
+
+# FusionAuth field error codes → (domain_code, user-friendly message)
+# Keys are composite: [errorType]field.path
+FUSIONAUTH_FIELD_ERROR_MAP: Dict[str, tuple] = {
+    # Username
+    "[duplicate]user.username":  ("DUPLICATE_USER", "User with this phone number already exists"),
+    "[blank]user.username":      ("MISSING_FIELD", "Username is required"),
+
+    # Email
+    "[duplicate]user.email":     ("DUPLICATE_EMAIL", "User with this email already exists"),
+    "[blank]user.email":         ("MISSING_FIELD", "Email is required"),
+    "[notEmail]user.email":      ("INVALID_EMAIL_FORMAT", "Invalid email address format"),
+    "[blocked]user.email":       ("EMAIL_BLOCKED", "This email domain is not allowed"),
+
+    # Password
+    "[blank]user.password":                    ("MISSING_FIELD", "Password is required"),
+    "[tooShort]user.password":                 ("PASSWORD_TOO_SHORT", "Password does not meet the minimum length requirement"),
+    "[tooLong]user.password":                  ("PASSWORD_TOO_LONG", "Password exceeds the maximum length requirement"),
+    "[singleCase]user.password":               ("PASSWORD_REQUIRES_MIXED_CASE", "Password must contain both upper and lowercase characters"),
+    "[onlyAlpha]user.password":                ("PASSWORD_REQUIRES_NON_ALPHA", "Password must contain a non-alphabetic character"),
+    "[requireNumber]user.password":            ("PASSWORD_REQUIRES_NUMBER", "Password must contain a number"),
+    "[previouslyUsed]user.password":           ("PASSWORD_PREVIOUSLY_USED", "This password has been used recently"),
+    "[tooYoung]user.password":                 ("PASSWORD_CHANGE_TOO_RECENT", "Password was changed too recently"),
+    "[breachedCommonPassword]user.password":    ("PASSWORD_BREACHED", "This password is not secure enough"),
+    "[breachedExactMatch]user.password":        ("PASSWORD_BREACHED", "This password is not secure enough"),
+    "[breachedSubAddressMatch]user.password":   ("PASSWORD_BREACHED", "This password is not secure enough"),
+    "[breachedPasswordOnly]user.password":      ("PASSWORD_BREACHED", "This password is not secure enough"),
+
+    # Registration
+    "[invalid]registration.roles": ("INVALID_ROLE", "The specified role does not exist"),
+    "[duplicate]registration":     ("DUPLICATE_REGISTRATION", "User is already registered for this application"),
+
+    # Login fields
+    "[blank]loginId":   ("MISSING_FIELD", "Login ID is required"),
+    "[blank]password":  ("MISSING_FIELD", "Password is required"),
+
+    # User ID
+    "[couldNotConvert]userId": ("INVALID_USER_ID", "Invalid user ID format"),
+
+    # Refresh token
+    "[invalid]refreshToken": ("INVALID_REFRESH_TOKEN", "Refresh token is invalid or expired"),
+}
+
+# FusionAuth general error codes → (domain_code, user-friendly message)
+FUSIONAUTH_GENERAL_ERROR_MAP: Dict[str, tuple] = {
+    "[LoginPreventedException]":              ("ACCOUNT_LOCKED", "Your account has been locked"),
+    "[UserLockedException]":                  ("ACCOUNT_LOCKED", "Your account has been locked"),
+    "[UserExpiredException]":                 ("ACCOUNT_EXPIRED", "Your account has expired"),
+    "[UserAuthorizedNotRegisteredException]": ("NOT_REGISTERED", "Your account is not registered for this application"),
+}
 
 
 class FusionAuthAdapter:
@@ -30,26 +83,74 @@ class FusionAuthAdapter:
         """Handle FusionAuth API response and extract data or raise error"""
         if response.was_successful():
             return response.success_response
-        else:
-            error_data = response.error_response
-            error_msg = f"FusionAuth API error (status: {response.status})"
-            details = None
 
-            if error_data:
-                if 'fieldErrors' in error_data:
-                    details = str(error_data['fieldErrors'])
-                elif 'generalErrors' in error_data:
-                    details = str(error_data['generalErrors'])
-                else:
-                    details = str(error_data)
+        error_data = response.error_response
+        error_msg = f"FusionAuth API error (status: {response.status})"
 
-            logger.error(f"FusionAuth error: {error_msg}, details: {details}")
+        # Log the complete raw error payload before any parsing
+        logger.error(f"FusionAuth raw error response: {error_data}")
 
-            raise FusionAuthError(
-                message=error_msg,
-                status_code=response.status,
-                details=details
-            )
+        errors: List[Dict[str, Any]] = []
+
+        if isinstance(error_data, dict):
+            # Parse fieldErrors: Dict[field_path, List[{code, message, ...}]]
+            field_errors = error_data.get('fieldErrors', {})
+            for field_path, error_list in field_errors.items():
+                for error_entry in error_list:
+                    code = error_entry.get('code', '')
+                    message = error_entry.get('message', error_msg)
+
+                    # Look up the composite key in the field error map
+                    mapping = FUSIONAUTH_FIELD_ERROR_MAP.get(code)
+                    if mapping:
+                        domain_code, default_message = mapping
+                    else:
+                        domain_code, default_message = "AUTH_PROVIDER_ERROR", message
+
+                    # Extract domain field name from dotted path (last segment)
+                    domain_field = field_path.rsplit('.', 1)[-1] if '.' in field_path else field_path
+
+                    errors.append({
+                        "detail": default_message,
+                        "error_code": domain_code,
+                        "field": domain_field,
+                        "original_value": error_entry.get('value'),
+                    })
+
+            # Parse generalErrors: List[{code, message}]
+            if not errors:
+                general_errors = error_data.get('generalErrors', [])
+                for error_entry in general_errors:
+                    code = error_entry.get('code', '')
+                    message = error_entry.get('message', error_msg)
+
+                    mapping = FUSIONAUTH_GENERAL_ERROR_MAP.get(code)
+                    if mapping:
+                        domain_code, default_message = mapping
+                    else:
+                        domain_code, default_message = "AUTH_PROVIDER_ERROR", message
+
+                    errors.append({
+                        "detail": default_message,
+                        "error_code": domain_code,
+                        "field": None,
+                        "original_value": None,
+                    })
+
+        # Fallback: no parseable errors found
+        if not errors:
+            errors.append({
+                "detail": error_msg,
+                "error_code": "AUTH_PROVIDER_ERROR",
+                "field": None,
+                "original_value": None,
+            })
+
+        raise FusionAuthError(
+            message=error_msg,
+            status_code=response.status,
+            errors=errors,
+        )
 
     @retry(
         reraise=True,
@@ -80,7 +181,7 @@ class FusionAuthAdapter:
             raise
         except Exception as e:
             logger.error(f"Error creating user: {e}")
-            raise FusionAuthError(f"Failed to create user: {str(e)}")
+            raise FusionAuthError(f"Failed to create user: {str(e)}", status_code=500)
 
     @retry(
         reraise=True,
@@ -104,7 +205,7 @@ class FusionAuthAdapter:
             raise
         except Exception as e:
             logger.error(f"Error registering user: {e}")
-            raise FusionAuthError(f"Failed to register user: {str(e)}")
+            raise FusionAuthError(f"Failed to register user: {str(e)}", status_code=500)
 
     @retry(
         reraise=True,
@@ -130,7 +231,7 @@ class FusionAuthAdapter:
             refresh_token = result.get("refreshToken")
             if not refresh_token:
                 logger.error("FusionAuth login response missing refresh token despite request")
-                raise FusionAuthError("Login failed: refresh token not returned by FusionAuth", status_code=response.status)
+                raise FusionAuthError("Login failed: refresh token not returned by FusionAuth", status_code=response.status or 500)
 
             return {
                 "accessToken": result.get("token"),
@@ -143,7 +244,7 @@ class FusionAuthAdapter:
             raise
         except Exception as e:
             logger.error(f"Error during login: {e}")
-            raise FusionAuthError(f"Login failed: {str(e)}")
+            raise FusionAuthError(f"Login failed: {str(e)}", status_code=500)
 
     @retry(
         reraise=True,
@@ -161,7 +262,7 @@ class FusionAuthAdapter:
             raise
         except Exception as e:
             logger.error(f"Error retrieving user: {e}")
-            raise FusionAuthError(f"Failed to retrieve user: {str(e)}")
+            raise FusionAuthError(f"Failed to retrieve user: {str(e)}", status_code=500)
 
     @retry(
         reraise=True,
@@ -202,7 +303,7 @@ class FusionAuthAdapter:
             raise
         except Exception as e:
             logger.error(f"Error deleting user: {e}")
-            raise FusionAuthError(f"Failed to delete user: {str(e)}")
+            raise FusionAuthError(f"Failed to delete user: {str(e)}", status_code=500)
 
     @retry(
         reraise=True,
@@ -257,7 +358,7 @@ class FusionAuthAdapter:
             raise
         except Exception as e:
             logger.error(f"Error updating user: {e}")
-            raise FusionAuthError(f"Failed to update user: {str(e)}")
+            raise FusionAuthError(f"Failed to update user: {str(e)}", status_code=500)
 
 
 # Global adapter instance

@@ -86,9 +86,15 @@ class LogoutRequest(BaseModel):
     refresh_token: Optional[str] = Field(None, description="Refresh token to revoke")
 
 
-class ErrorResponse(BaseModel):
-    error: str = Field(..., description="Error message")
-    details: Optional[str] = Field(None, description="Error details")
+class FusionAuthFieldError(BaseModel):
+    detail: str = Field(..., description="Human-readable error message")
+    error_code: str = Field(..., description="Domain error code (screaming snake case)")
+    field: Optional[str] = Field(None, description="Domain field name that caused the error")
+    original_value: Optional[str] = Field(None, description="The value that was rejected")
+
+
+class FusionAuthErrorResponse(BaseModel):
+    errors: List[FusionAuthFieldError] = Field(..., description="List of structured errors")
 
 
 class HealthResponse(BaseModel):

@@ -91,7 +91,7 @@ security = HTTPBearer()
 async def fusionauth_exception_handler(_request, exc: FusionAuthError):
     return JSONResponse(
         status_code=exc.status_code or 500,
-        content={"error": exc.message, "details": exc.details}
+        content={"errors": exc.errors}
     )
 
 
